@@ -16,6 +16,6 @@ class Config:
     EMBEDDING_DEPLOYMENT_NAME = os.getenv("EMBEDDING_DEPLOYMENT_NAME")
 
     DATASOURCE_NAME = "srch-datasource-files"
-    INDEX_NAME = "srch-index-files"
+    INDEX_NAME = "srch-index-files-v2"
     SKILLSET_NAME = "srch-skillset-files"
     INDEXER_NAME = "srch-indexer-files"

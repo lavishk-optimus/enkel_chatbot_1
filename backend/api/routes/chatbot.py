@@ -1,24 +1,30 @@
 from fastapi import APIRouter
-from backend.services.chatbot_service import query_index
+from backend.services.chatbot_service import query_index, generate_response
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from backend.core.config import Config
 from azure.storage.blob import BlobServiceClient
 from backend.services.azure_ai_search import create_datasource, create_index, create_indexer
+from pydantic import BaseModel
 
 
+class ChatRequest(BaseModel):
+    question: str
 
-router = APIRouter()
+router = APIRouter()    
 
 @router.post("/chatbot/query")
-def chatbot_query(question: str):
+def chatbot_query(request: ChatRequest):
 
-    rel_doc_text=""
+    # # UNCOMMENT THE LINE BELOW after FIXING the query_index() from service.chatbot_service
+    # rel_doc_text=query_index(question)
+    rel_doc_text=request.question
+    resp=generate_response(rel_doc_text)
+    print(resp)
+
+    return resp
 
 
-    return query_index(question)
-
-
-
+ 
 # blob_service_client = BlobServiceClient.from_connection_string(Config.BLOB_CONNECTION_STRING)
 # container_client = blob_service_client.get_container_client(Config.BLOB_CONTAINER_NAME)
 
