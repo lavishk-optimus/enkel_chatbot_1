@@ -1,38 +1,151 @@
+from openai import AzureOpenAI
 import requests
 from backend.core.config import Config
-from backend.services.chat_auth_client import Client
-client=Client().cnt
 
 
-def query_index(question):
-    """Queries the Azure AI Search Index."""
-    payload = {
-        "search": question,
-        "top": 5,
-        "searchFields": "title,chunk",
-        "select": "id,title,chunk"
+search_headers = {
+    "Content-Type": "application/json",
+    "api-key": Config.AZURE_SEARCH_KEY
+}
+search_params = {"api-version": Config.AZURE_SEARCH_API_VERSION}
+
+openai_client = AzureOpenAI(
+    api_key=Config.AZURE_OPENAI_API_KEY,
+    api_version="2024-02-01",
+    azure_endpoint=Config.AZURE_OPENAI_ENDPOINT
+)
+
+openai_headers = {
+    "Content-Type": "application/json",
+    "Authorization": f"Bearer {Config.AZURE_OPENAI_API_KEY}"
+}
+
+
+def generate_embedding(text):
+    """Generate embeddings using Azure OpenAI"""
+    client = AzureOpenAI(
+        api_key=Config.AZURE_OPENAI_API_KEY,
+        api_version="2024-02-01",
+        azure_endpoint=Config.AZURE_OPENAI_ENDPOINT
+    )
+
+    response = client.embeddings.create(
+        input=text,
+        model=Config.EMBEDDING_DEPLOYMENT_NAME
+    )
+
+    if response and response.data:
+        return response.data[0].embedding
+    else:
+        print("Embedding generation failed.")
+        return None
+
+def query_cognitive_search(query_vector):
+    """Retrieve top 5 relevant documents from Azure Cognitive Search"""
+    
+    url = f"{Config.AZURE_SEARCH_ENDPOINT}/indexes/{Config.INDEX_NAME}/docs/search?api-version=2024-11-01-Preview"
+
+    search_payload = {
+        "search": "*", 
+        "vectorQueries": [
+            {
+                "kind": "vector", 
+                "vector": query_vector,  
+                "k": 5,  
+                "fields": "chunkVector"  
+            }
+        ],
+        "select": "title,chunk",
+        "queryType": "semantic",
+        "semanticConfiguration": "my-semantic-config"
     }
-    url = f"{Config.AZURE_SEARCH_ENDPOINT}/indexes/{Config.INDEX_NAME}/docs/search"
-    response = requests.post(url, json=payload, headers={"api-key": Config.AZURE_SEARCH_KEY})
-    return response.json()
+
+    headers = {
+        "Content-Type": "application/json",
+        "api-key": Config.AZURE_SEARCH_KEY
+    }
+
+    response = requests.post(url, json=search_payload, headers=headers)
+
+    if response.status_code == 200:
+        return response.json().get("value", [])
+    else:
+        print(f"Search request failed: {response.text}")
+        return []
+
+def handle_query(user_query):
+    """Generate embedding & retrieve relevant documents"""
+    query_vector = generate_embedding(user_query)  
+    if not query_vector:
+        return {"error": "Embedding generation failed."}
+
+    documents = query_cognitive_search(query_vector)  
+    return documents
 
 
 
-def generate_response(ques):
-        resp=""
-        completion = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": ques}
-            ],
-            stream=True
-        )
 
-        for chunk in completion:
-            if chunk.choices and chunk.choices[0].delta.content is not None:
-                print(chunk.choices[0].delta.content, end='',)
-                resp=resp+chunk.choices[0].delta.content+" "
-        
-        # print(resp)
-        return resp
+def generate_llm_response(query, documents):
+    """Use Azure OpenAI to generate a response based on retrieved documents"""
+    if not documents:
+        return "I couldn't find relevant information."
+
+    context = "\n".join([f"{doc['title']}: {doc['chunk']}" for doc in documents])
+    
+    if "expense" in query.lower() or "invoice" in query.lower():
+        prompt = f"""
+        You are a financial AI assistant. Analyze the given invoice details and determine the expense category and tax implications.
+
+        Context:
+        {context}
+
+        Question: {query}
+
+        - Identify the probable category of the expense.
+        - Determine its tax treatment.
+        - Provide confidence levels and supporting evidence.
+        - If no relevant data is found, reply: "I couldn't find relevant information."
+
+        Answer:
+        """
+
+    elif "vendor" in query.lower() or "supplier" in query.lower():
+        prompt = f"""
+        You are a financial AI assistant. Identify inconsistently named vendors and suggest standardizations.
+
+        Context:
+        {context}
+
+        Question: {query}
+
+        - Detect duplicate vendors (e.g., 'Optimus', 'Optimus Inc', 'Optimusinfo') and suggest standard names.
+        - Provide confidence scores for matches.
+        - If no relevant data is found, reply: "I couldn't find relevant information."
+
+        Answer:
+        """
+
+    else:
+        prompt = f"""
+        You are an AI assistant. Answer the question strictly based on the provided context:
+
+        Context:
+        {context}
+
+        Question: {query}
+
+        If the question is unrelated to the provided context, reply: "I couldn't find relevant information."
+
+        Answer:
+        """
+
+    response = openai_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "You are a financial AI assistant."},
+            {"role": "user", "content": prompt}
+        ],
+        max_tokens=200
+    )
+
+    return response.choices[0].message.content  
